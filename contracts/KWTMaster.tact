@@ -681,10 +681,17 @@ contract KWTWallet {
 
         let fwdFee: Int = ctx.readForwardFee() + ctx.readForwardFee();
         let final: Int = 2 * self.gasConsumption + self.minTonsForStorage + fwdFee;
-        require(ctx.value >= min(final, ton("0.05")), "invalid value");
         
         // Phase 2 burn: If transfer >= 1M tokens, burns 50 tokens
         let phase2BurnAmount: Int = self.shouldBurnPhase2(msg.amount);
+
+        // Calculate required value: Base + Volume Notification + (Optional) Burn Notification
+        let requiredValue: Int = final + ton("0.05"); 
+        if (phase2BurnAmount > 0) {
+            requiredValue = requiredValue + ton("0.05");
+        }
+        require(ctx.value >= requiredValue, "insufficient value");
+
         let totalDeduct: Int = msg.amount + phase2BurnAmount;
 
         self.balance = self.balance - totalDeduct;
@@ -694,8 +701,8 @@ contract KWTWallet {
         if (phase2BurnAmount > 0) {
             send(SendParameters{
                 to: self.master,
-                value: 0,
-                mode: SendRemainingValue,
+                value: ton("0.05"),
+                mode: SendPayGasSeparately,
                 bounce: true,
                 body: TokenBurnNotification{
                     queryId: msg.queryId,
@@ -705,6 +712,20 @@ contract KWTWallet {
                 }.toCell()
             });
         }
+
+        // Notify master for volume tracking
+        send(SendParameters{
+            to: self.master,
+            value: ton("0.05"),
+            mode: SendPayGasSeparately + SendIgnoreErrors,
+            bounce: false,
+            body: TokenNotification{
+                queryId: msg.queryId,
+                amount: msg.amount,
+                from: self.owner,
+                forward_payload: emptySlice()
+            }.toCell()
+        });
 
         // Send transfer
         let init: StateInit = initOf KWTWallet(self.master, msg.destination);
@@ -726,20 +747,6 @@ contract KWTWallet {
             }.toCell(),
             code: init.code,
             data: init.data
-        });
-
-        // Notify master for volume tracking
-        send(SendParameters{
-            to: self.master,
-            value: 0,
-            mode: SendRemainingValue + SendIgnoreErrors,
-            bounce: false,
-            body: TokenNotification{
-                queryId: msg.queryId,
-                amount: msg.amount,
-                from: self.owner,
-                forward_payload: emptySlice()
-            }.toCell()
         });
     }
 
